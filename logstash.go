@@ -112,12 +112,10 @@ func (a *LogstashAdapter) writeMessage(m *router.Message) error {
 	buff, err := serialize(m)
 
 	if err != nil {
-		log.Println("logstash:", err)
 		return err
 	}
 	_, err = a.conn.Write(buff)
 	if err != nil {
-		log.Println("logstash:", err)
 		return err
 	}
 	return nil
