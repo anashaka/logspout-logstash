@@ -133,8 +133,8 @@ func serialize(m *router.Message) ([]byte, error) {
 	}
 	udacityInfo := UdacityInfo{
 		Name:    m.Container.Config.Labels["com.udacity.name"],
-		Env:     m.Container.Config.Labels["com.udacity.version"],
-		Version: m.Container.Config.Labels["com.udacity.env"],
+		Version: m.Container.Config.Labels["com.udacity.version"],
+		Env:     m.Container.Config.Labels["com.udacity.env"],
 	}
 
 	err := json.Unmarshal([]byte(m.Data), &jsonMsg)
