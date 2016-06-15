@@ -8,11 +8,11 @@ import (
 )
 
 type MultilineConfig struct {
-	Negate    bool           `config:"negate"`
+	Pattern   *regexp.Regexp `config:"pattern"     validate:"required"`
 	GroupWith string         `config:"match"       validate:"required"`
+	Negate    bool           `config:"negate"`
 	Separator *string        `config:"separator"`
 	MaxLines  int            `config:"max_lines"`
-	Pattern   *regexp.Regexp `config:"pattern"`
 }
 
 // MultiLine processor combining multiple line events into one multi-line event.
