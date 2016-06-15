@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"regexp"
+	"strconv"
 
 	"github.com/gliderlabs/logspout/router"
 	"github.com/udacity/logspout-logstash/multiline"
@@ -15,18 +16,57 @@ func init() {
 	router.AdapterFactories.Register(NewLogstashAdapter, "logstash")
 }
 
+type newMultilineBufferFn func() (multiline.MultiLine, error)
+
 // LogstashAdapter is an adapter that streams TCP JSON to Logstash.
 type LogstashAdapter struct {
-	conn  net.Conn
-	route *router.Route
-	cache map[string]*multiline.MultiLine
+	conn     net.Conn
+	route    *router.Route
+	cache    map[string]*multiline.MultiLine
+	mkBuffer newMultilineBufferFn
 }
 
 func newLogstashAdapter(route *router.Route, conn net.Conn) *LogstashAdapter {
+	patternString, ok := route.Options["pattern"]
+	if !ok {
+		patternString = `(^\s)|(^Caused by:)`
+	}
+
+	groupWith, ok := route.Options["group_with"]
+	if !ok {
+		groupWith = "previous"
+	}
+
+	negate := false
+	negateStr, _ := route.Options["negate"]
+	if negateStr == "true" {
+		negate = true
+	}
+
+	separator, ok := route.Options["separator"]
+	if !ok {
+		separator = "\n"
+	}
+
+	maxLines, err := strconv.Atoi(route.Options["max_lines"])
+	if err != nil {
+		maxLines = 0
+	}
+
 	return &LogstashAdapter{
 		route: route,
 		conn:  conn,
 		cache: make(map[string]*multiline.MultiLine),
+		mkBuffer: func() (multiline.MultiLine, error) {
+			return multiline.NewMultiLine(
+				&multiline.MultilineConfig{
+					Pattern:   regexp.MustCompile(patternString),
+					GroupWith: groupWith,
+					Negate:    negate,
+					Separator: &separator,
+					MaxLines:  maxLines,
+				})
+		},
 	}
 }
 
@@ -47,11 +87,7 @@ func NewLogstashAdapter(route *router.Route) (router.LogAdapter, error) {
 
 func (a *LogstashAdapter) lookupBuffer(key string) *multiline.MultiLine {
 	if a.cache[key] == nil {
-		ml, _ := multiline.NewMultiLine(
-			&multiline.MultilineConfig{
-				Pattern:   regexp.MustCompile(`(^\s)|(^Caused by:)`),
-				GroupWith: "previous",
-			})
+		ml, _ := a.mkBuffer()
 		a.cache[key] = &ml
 	}
 	return a.cache[key]
