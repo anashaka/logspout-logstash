@@ -124,9 +124,9 @@ func exercise(ml MultiLine, logInput ...string) (MultiLine, []*router.Message) {
 	var lines []*router.Message
 
 	for _, line := range createLines(logInput...) {
-		ml = Step(ml, line)
-		if ml.State == Flushed {
-			lines = append(lines, ml.Last)
+		msg := ml.Buffer(line)
+		if msg != nil {
+			lines = append(lines, msg)
 		}
 	}
 
@@ -146,8 +146,8 @@ func checkOutput(t *testing.T, expected []string, output []*router.Message) {
 
 func flushPendingLine(ml MultiLine, lines *[]*router.Message) MultiLine {
 	if len(ml.pending) > 0 && ml.pending[0].Data != "" {
-		ml = Flush(ml, &router.Message{Data: ""})
-		*lines = append(*lines, ml.Last)
+		msg := ml.StartNewLine(&router.Message{Data: ""})
+		*lines = append(*lines, msg)
 	}
 	return ml
 }

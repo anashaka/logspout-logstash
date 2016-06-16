@@ -5,6 +5,7 @@ import (
 	"github.com/gliderlabs/logspout/router"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type MultilineConfig struct {
@@ -28,17 +29,9 @@ type MultiLine struct {
 	maxLines    int
 	separator   string
 
-	pending []*router.Message
-	Last    *router.Message
-	State   MLState
+	pending     []*router.Message
+	LastUpdated time.Time
 }
-
-type MLState int
-
-const (
-	Buffering MLState = iota
-	Flushed
-)
 
 const (
 	// Default maximum number of lines to return in one multi-line event
@@ -91,37 +84,22 @@ func NewMultiLine(config *MultilineConfig) (MultiLine, error) {
 	return ml, nil
 }
 
-// Step returns the next multi-line value
-func Step(ml MultiLine, next *router.Message) MultiLine {
-	if len(ml.pending) == 0 {
-		return addPending(ml, next)
-	} else if ml.isMultiline(getLastPendingData(&ml), next.Data) {
-		return addPending(ml, next)
+// Adds a message to the MultiLine buffer, returning a flushed message if one is ready
+func (ml *MultiLine) Buffer(next *router.Message) *router.Message {
+	ml.LastUpdated = time.Now()
+	if ml.isContinuationMessage(next) {
+		return ml.addPending(next)
 	} else {
-		return Flush(ml, next)
+		return ml.StartNewLine(next)
 	}
 }
 
-func Flush(ml MultiLine, next *router.Message) MultiLine {
-	var buffer []string
-
-	for _, message := range ml.pending {
-		buffer = append(buffer, message.Data)
-	}
-
-	ml.Last = ml.pending[0]
-	ml.Last.Data = strings.Join(buffer, ml.separator)
-	ml.pending = []*router.Message{next}
-	ml.State = Flushed
-
-	return ml
+func (ml *MultiLine) isContinuationMessage(msg *router.Message) bool {
+	return len(ml.pending) == 0 ||
+		ml.isMultiline(ml.getLastPendingData(), msg.Data)
 }
 
-func getLastPendingData(ml *MultiLine) string {
-	return ml.pending[len(ml.pending)-1].Data
-}
-
-func addPending(ml MultiLine, next *router.Message) MultiLine {
+func (ml *MultiLine) addPending(next *router.Message) *router.Message {
 	if len(ml.pending) < ml.maxLines {
 		ml.pending = append(ml.pending, next)
 	} else if len(ml.pending) == ml.maxLines {
@@ -129,9 +107,36 @@ func addPending(ml MultiLine, next *router.Message) MultiLine {
 		truncMessage.Data = "[Truncated]"
 		ml.pending = append(ml.pending, &truncMessage)
 	}
-	ml.Last = nil
-	ml.State = Buffering
-	return ml
+
+	return nil
+}
+
+func (ml *MultiLine) StartNewLine(next *router.Message) *router.Message {
+	msg := ml.flush()
+	ml.pending = []*router.Message{next}
+
+	return msg
+}
+
+func (ml *MultiLine) flush() *router.Message {
+	var buffer []string
+	var msg *router.Message
+
+	for _, message := range ml.pending {
+		buffer = append(buffer, message.Data)
+	}
+
+	if len(ml.pending) > 0 {
+		msg = new(router.Message)
+		*msg = *ml.pending[0]
+		msg.Data = strings.Join(buffer, ml.separator)
+	}
+
+	return msg
+}
+
+func (ml *MultiLine) getLastPendingData() string {
+	return ml.pending[len(ml.pending)-1].Data
 }
 
 // matchers

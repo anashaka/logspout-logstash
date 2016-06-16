@@ -97,10 +97,10 @@ func (a *LogstashAdapter) lookupBuffer(key string) *multiline.MultiLine {
 func (a *LogstashAdapter) Stream(logstream chan *router.Message) {
 	for m := range logstream {
 		multiLineBuffer := a.lookupBuffer(m.Container.ID)
-		*multiLineBuffer = multiline.Step(*multiLineBuffer, m)
+		m := multiLineBuffer.Buffer(m)
 
-		if multiLineBuffer.State == multiline.Flushed {
-			err := a.writeMessage(multiLineBuffer.Last)
+		if m != nil {
+			err := a.writeMessage(m)
 			if err != nil {
 				log.Println("logstash:", err)
 			}
