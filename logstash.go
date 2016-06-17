@@ -87,7 +87,7 @@ func newLogstashAdapter(route *router.Route, conn net.Conn) *LogstashAdapter {
 
 // NewLogstashAdapter creates a LogstashAdapter with TCP as the default transport.
 func NewLogstashAdapter(route *router.Route) (router.LogAdapter, error) {
-	transport, found := router.AdapterTransports.Lookup(route.AdapterTransport("tcp"))
+	transport, found := router.AdapterTransports.Lookup(route.AdapterTransport("udp"))
 	if !found {
 		return nil, errors.New("unable to find adapter: " + route.Adapter)
 	}
