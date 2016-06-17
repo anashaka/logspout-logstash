@@ -107,6 +107,30 @@ func TestMultilineMaxLinesExceededOk(t *testing.T) {
 	checkOutput(t, expected, lines)
 }
 
+func TestCacheExpireTTL(t *testing.T) {
+	ml, _ := NewMultiLine(&MultilineConfig{
+		Pattern:   regexp.MustCompile(`^\s`), // next line is indented by spaces
+		GroupWith: "previous",
+	})
+
+	t0 := time.Now()
+
+	ml.Buffer(&router.Message{Data: "test"})
+	ml.LastTouched = t0
+	msg := ml.Expire(t0.Add(2*time.Second), time.Second)
+	assert.NotNil(t, msg, "Expired messages should be flushed")
+
+	ml.Buffer(&router.Message{Data: "test"})
+	ml.LastTouched = t0
+	msg = ml.Expire(t0.Add(time.Second), time.Second)
+	assert.Nil(t, msg, "Flush not expected when no messages have expired")
+
+	ml.Buffer(&router.Message{Data: "test"})
+	ml.LastTouched = t0
+	msg = ml.Expire(t0.Add(time.Second), time.Second)
+	assert.Nil(t, msg, "Flush not expected when no messages have expired")
+}
+
 func testMultilineOK(t *testing.T, cfg MultilineConfig, expected ...string) {
 	var lines []*router.Message
 
@@ -136,6 +160,7 @@ func exercise(ml MultiLine, logInput ...string) (MultiLine, []*router.Message) {
 }
 
 func checkOutput(t *testing.T, expected []string, output []*router.Message) {
+	assert.Equal(t, len(expected), len(output))
 	for i, expected := range expected {
 		actual := output[i]
 		var tsZero time.Time
@@ -146,7 +171,7 @@ func checkOutput(t *testing.T, expected []string, output []*router.Message) {
 
 func flushPendingLine(ml MultiLine, lines *[]*router.Message) MultiLine {
 	if len(ml.pending) > 0 && ml.pending[0].Data != "" {
-		msg := ml.StartNewLine(&router.Message{Data: ""})
+		msg := ml.Flush()
 		*lines = append(*lines, msg)
 	}
 	return ml

@@ -30,7 +30,7 @@ type MultiLine struct {
 	separator   string
 
 	pending     []*router.Message
-	LastUpdated time.Time
+	LastTouched time.Time
 }
 
 const (
@@ -86,7 +86,7 @@ func NewMultiLine(config *MultilineConfig) (MultiLine, error) {
 
 // Adds a message to the MultiLine buffer, returning a flushed message if one is ready
 func (ml *MultiLine) Buffer(next *router.Message) *router.Message {
-	ml.LastUpdated = time.Now()
+	ml.LastTouched = time.Now()
 	if ml.isContinuationMessage(next) {
 		return ml.addPending(next)
 	} else {
@@ -112,13 +112,13 @@ func (ml *MultiLine) addPending(next *router.Message) *router.Message {
 }
 
 func (ml *MultiLine) StartNewLine(next *router.Message) *router.Message {
-	msg := ml.flush()
+	msg := ml.Flush()
 	ml.pending = []*router.Message{next}
 
 	return msg
 }
 
-func (ml *MultiLine) flush() *router.Message {
+func (ml *MultiLine) Flush() *router.Message {
 	var buffer []string
 	var msg *router.Message
 
@@ -133,6 +133,18 @@ func (ml *MultiLine) flush() *router.Message {
 	}
 
 	return msg
+}
+
+func (ml *MultiLine) Expire(t time.Time, ttl time.Duration) *router.Message {
+	if isExpired(t, ml.LastTouched, ttl) {
+		return ml.Flush()
+	} else {
+		return nil
+	}
+}
+
+func isExpired(t time.Time, lastTouched time.Time, ttl time.Duration) bool {
+	return t.Sub(lastTouched) > ttl
 }
 
 func (ml *MultiLine) getLastPendingData() string {

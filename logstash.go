@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/gliderlabs/logspout/router"
 	"github.com/udacity/logspout-logstash/multiline"
@@ -23,8 +24,16 @@ type LogstashAdapter struct {
 	conn     net.Conn
 	route    *router.Route
 	cache    map[string]*multiline.MultiLine
+	cacheTTL time.Duration
 	mkBuffer newMultilineBufferFn
 }
+
+type ControlCode int
+
+const (
+	Continue ControlCode = iota
+	Quit
+)
 
 func newLogstashAdapter(route *router.Route, conn net.Conn) *LogstashAdapter {
 	patternString, ok := route.Options["pattern"]
@@ -53,10 +62,16 @@ func newLogstashAdapter(route *router.Route, conn net.Conn) *LogstashAdapter {
 		maxLines = 0
 	}
 
+	cacheTTL, err := time.ParseDuration(route.Options["cache_ttl"])
+	if err != nil {
+		cacheTTL = 10 * time.Second
+	}
+
 	return &LogstashAdapter{
-		route: route,
-		conn:  conn,
-		cache: make(map[string]*multiline.MultiLine),
+		route:    route,
+		conn:     conn,
+		cache:    make(map[string]*multiline.MultiLine),
+		cacheTTL: cacheTTL,
 		mkBuffer: func() (multiline.MultiLine, error) {
 			return multiline.NewMultiLine(
 				&multiline.MultilineConfig{
@@ -95,21 +110,84 @@ func (a *LogstashAdapter) lookupBuffer(key string) *multiline.MultiLine {
 
 // Stream implements the router.LogAdapter interface.
 func (a *LogstashAdapter) Stream(logstream chan *router.Message) {
-	for m := range logstream {
-		multiLineBuffer := a.lookupBuffer(m.Container.ID)
-		m := multiLineBuffer.Buffer(m)
+	cacheTicker := time.NewTicker(a.cacheTTL).C
 
-		if m != nil {
-			err := a.writeMessage(m)
-			if err != nil {
-				log.Println("logstash:", err)
-			}
+	for {
+		msgs, ccode := a.readMessages(logstream, cacheTicker)
+		a.sendMessages(msgs)
+
+		switch ccode {
+		case Continue:
+			continue
+		case Quit:
+			return
 		}
 	}
 }
 
-func (a *LogstashAdapter) writeMessage(m *router.Message) error {
-	buff, err := serialize(m)
+func (a *LogstashAdapter) readMessages(
+	logstream chan *router.Message,
+	cacheTicker <-chan time.Time) ([]*router.Message, ControlCode) {
+	select {
+	case t := <-cacheTicker:
+		return a.expireCache(t), Continue
+	case msg, ok := <-logstream:
+		if ok {
+			return a.bufferMessage(msg), Continue
+		} else {
+			return a.flushPendingMessages(), Quit
+		}
+	}
+}
+
+func (a *LogstashAdapter) bufferMessage(msg *router.Message) []*router.Message {
+	msgOrNil := a.lookupBuffer(msg.Container.ID).Buffer(msg)
+
+	if msgOrNil == nil {
+		return []*router.Message{}
+	} else {
+		return []*router.Message{msgOrNil}
+	}
+}
+
+func (a *LogstashAdapter) expireCache(t time.Time) []*router.Message {
+	var messages []*router.Message
+
+	for id, buf := range a.cache {
+		msg := buf.Expire(t, a.cacheTTL)
+		if msg != nil {
+			messages = append(messages, msg)
+			delete(a.cache, id)
+		}
+	}
+
+	return messages
+}
+
+func (a *LogstashAdapter) flushPendingMessages() []*router.Message {
+	var messages []*router.Message
+
+	for _, buf := range a.cache {
+		msg := buf.Flush()
+		if msg != nil {
+			messages = append(messages, msg)
+		}
+	}
+
+	return messages
+}
+
+func (a *LogstashAdapter) sendMessages(msgs []*router.Message) {
+	for _, msg := range msgs {
+		err := a.sendMessage(msg)
+		if err != nil {
+			log.Println("logstash:", err)
+		}
+	}
+}
+
+func (a *LogstashAdapter) sendMessage(msg *router.Message) error {
+	buff, err := serialize(msg)
 
 	if err != nil {
 		return err
@@ -118,34 +196,35 @@ func (a *LogstashAdapter) writeMessage(m *router.Message) error {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
-func serialize(m *router.Message) ([]byte, error) {
+func serialize(msg *router.Message) ([]byte, error) {
 	var js []byte
 	var jsonMsg map[string]interface{}
 
 	dockerInfo := DockerInfo{
-		Name:     m.Container.Name,
-		ID:       m.Container.ID,
-		Image:    m.Container.Config.Image,
-		Hostname: m.Container.Config.Hostname,
+		Name:     msg.Container.Name,
+		ID:       msg.Container.ID,
+		Image:    msg.Container.Config.Image,
+		Hostname: msg.Container.Config.Hostname,
 	}
 	udacityInfo := UdacityInfo{
-		Name:    m.Container.Config.Labels["com.udacity.name"],
-		Version: m.Container.Config.Labels["com.udacity.version"],
-		Env:     m.Container.Config.Labels["com.udacity.env"],
+		Name:    msg.Container.Config.Labels["com.udacity.name"],
+		Version: msg.Container.Config.Labels["com.udacity.version"],
+		Env:     msg.Container.Config.Labels["com.udacity.env"],
 	}
 
-	err := json.Unmarshal([]byte(m.Data), &jsonMsg)
+	err := json.Unmarshal([]byte(msg.Data), &jsonMsg)
 
 	if err != nil {
 		// the message is not in JSON make a new JSON message
 		msg := LogstashMessage{
-			Message: m.Data,
+			Message: msg.Data,
 			Docker:  dockerInfo,
 			Udacity: udacityInfo,
-			Stream:  m.Source,
+			Stream:  msg.Source,
 		}
 		js, err = json.Marshal(msg)
 		if err != nil {

@@ -63,7 +63,6 @@ func TestStreamNotJson(t *testing.T) {
 	messages := []router.Message{
 		makeDummyMessage(&container, "Line1"),
 		makeDummyMessage(&container, "   Line1.1"),
-		router.Message{Container: &container}, // need last message to trigger buffer flush
 	}
 
 	go func() {
@@ -74,9 +73,7 @@ func TestStreamNotJson(t *testing.T) {
 		close(logstream)
 	}()
 
-	for i := 0; i < len(messages); i++ {
-		adapter.Stream(logstream)
-	}
+	adapter.Stream(logstream)
 
 	var data map[string]interface{}
 	err := json.Unmarshal([]byte(res), &data)
@@ -106,11 +103,9 @@ func TestStreamJson(t *testing.T) {
 
 	go func() {
 		logstream <- &message
-		logstream <- &router.Message{Container: &container}
 		close(logstream)
 	}()
 
-	adapter.Stream(logstream)
 	adapter.Stream(logstream)
 
 	var data map[string]interface{}
