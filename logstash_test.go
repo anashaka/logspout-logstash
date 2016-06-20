@@ -5,55 +5,21 @@ import (
 	"github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/logspout/router"
 	"github.com/stretchr/testify/assert"
-	"net"
 	"testing"
 	"time"
 )
 
 var res string
 
-type MockConn struct {
-}
-
-func (m MockConn) Close() error {
-	return nil
-}
-
-func (m MockConn) Read(b []byte) (n int, err error) {
-	return 0, nil
-}
-
-func (m MockConn) Write(b []byte) (n int, err error) {
+func mockWriter(b []byte) (int, error) {
 	res = string(b)
 	return 0, nil
-}
-
-func (m MockConn) LocalAddr() net.Addr {
-	return nil
-}
-
-func (m MockConn) RemoteAddr() net.Addr {
-	return nil
-}
-
-func (m MockConn) SetDeadline(t time.Time) error {
-	return nil
-}
-
-func (m MockConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (m MockConn) SetWriteDeadline(t time.Time) error {
-	return nil
 }
 
 func TestStreamNotJson(t *testing.T) {
 	assert := assert.New(t)
 
-	conn := MockConn{}
-
-	adapter := newLogstashAdapter(new(router.Route), conn)
+	adapter := newLogstashAdapter(new(router.Route), mockWriter)
 
 	assert.NotNil(adapter)
 
@@ -91,8 +57,7 @@ func TestStreamNotJson(t *testing.T) {
 
 func TestStreamJson(t *testing.T) {
 	assert := assert.New(t)
-	conn := MockConn{}
-	adapter := newLogstashAdapter(new(router.Route), conn)
+	adapter := newLogstashAdapter(new(router.Route), mockWriter)
 	assert.NotNil(adapter)
 	logstream := make(chan *router.Message)
 	container := makeDummyContainer()

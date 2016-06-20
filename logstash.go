@@ -21,7 +21,7 @@ type newMultilineBufferFn func() (multiline.MultiLine, error)
 
 // LogstashAdapter is an adapter that streams TCP JSON to Logstash.
 type LogstashAdapter struct {
-	conn     net.Conn
+	write    writer
 	route    *router.Route
 	cache    map[string]*multiline.MultiLine
 	cacheTTL time.Duration
@@ -35,7 +35,7 @@ const (
 	Quit
 )
 
-func newLogstashAdapter(route *router.Route, conn net.Conn) *LogstashAdapter {
+func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 	patternString, ok := route.Options["pattern"]
 	if !ok {
 		patternString = `(^\s)|(^Caused by:)`
@@ -69,7 +69,7 @@ func newLogstashAdapter(route *router.Route, conn net.Conn) *LogstashAdapter {
 
 	return &LogstashAdapter{
 		route:    route,
-		conn:     conn,
+		write:    write,
 		cache:    make(map[string]*multiline.MultiLine),
 		cacheTTL: cacheTTL,
 		mkBuffer: func() (multiline.MultiLine, error) {
@@ -87,7 +87,12 @@ func newLogstashAdapter(route *router.Route, conn net.Conn) *LogstashAdapter {
 
 // NewLogstashAdapter creates a LogstashAdapter with TCP as the default transport.
 func NewLogstashAdapter(route *router.Route) (router.LogAdapter, error) {
-	transport, found := router.AdapterTransports.Lookup(route.AdapterTransport("udp"))
+	transportId, ok := route.Options["transport"]
+	if !ok {
+		transportId = "udp"
+	}
+
+	transport, found := router.AdapterTransports.Lookup(route.AdapterTransport(transportId))
 	if !found {
 		return nil, errors.New("unable to find adapter: " + route.Adapter)
 	}
@@ -97,7 +102,14 @@ func NewLogstashAdapter(route *router.Route) (router.LogAdapter, error) {
 		return nil, err
 	}
 
-	return newLogstashAdapter(route, conn), nil
+	var write writer
+	if transportId == "tcp" {
+		write = tcpWriter(conn)
+	} else {
+		write = defaultWriter(conn)
+	}
+
+	return newLogstashAdapter(route, write), nil
 }
 
 func (a *LogstashAdapter) lookupBuffer(key string) *multiline.MultiLine {
@@ -192,7 +204,7 @@ func (a *LogstashAdapter) sendMessage(msg *router.Message) error {
 	if err != nil {
 		return err
 	}
-	_, err = a.conn.Write(buff)
+	_, err = a.write(buff)
 	if err != nil {
 		return err
 	}
@@ -263,4 +275,20 @@ type LogstashMessage struct {
 	Stream  string      `json:"stream"`
 	Docker  DockerInfo  `json:"docker"`
 	Udacity UdacityInfo `json:"udacity"`
+}
+
+// writers
+type writer func(b []byte) (int, error)
+
+func defaultWriter(conn net.Conn) writer {
+	return func(b []byte) (int, error) {
+		return conn.Write(b)
+	}
+}
+
+func tcpWriter(conn net.Conn) writer {
+	return func(b []byte) (int, error) {
+		// append a newline
+		return conn.Write([]byte(string(b) + "\n"))
+	}
 }
