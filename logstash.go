@@ -191,9 +191,8 @@ func (a *LogstashAdapter) flushPendingMessages() []*router.Message {
 
 func (a *LogstashAdapter) sendMessages(msgs []*router.Message) {
 	for _, msg := range msgs {
-		err := a.sendMessage(msg)
-		if err != nil {
-			log.Println("logstash:", err)
+		if err := a.sendMessage(msg); err != nil {
+			log.Fatal("logstash:", err)
 		}
 	}
 }
