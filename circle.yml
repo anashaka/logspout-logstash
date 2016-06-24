@@ -1,0 +1,23 @@
+machine:
+  environment:
+    IMPORT_PATH: ".go_workspace/src/github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
+
+dependencies:
+  pre:
+    - mkdir -p ~/$IMPORT_PATH
+    - rsync -avzC --delete ~/$CIRCLE_PROJECT_REPONAME/ ~/$IMPORT_PATH/
+    - rm -rf ~/$CIRCLE_PROJECT_REPONAME
+    - ln -s ~/$IMPORT_PATH ~/$CIRCLE_PROJECT_REPONAME 
+    - make deps
+
+test:
+  override:
+    - make test
+  post:
+    - make coveralls
+
+#deployment:
+#  production:
+#    branch: production
+#    commands:
+#      - make deploy

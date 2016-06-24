@@ -1,4 +1,7 @@
 # logspout-logstash
+[![CircleCI](https://circleci.com/gh/udacity/logspout-logstash.svg?style=svg)](https://circleci.com/gh/udacity/logspout-logstash)
+[![Coverage Status](https://coveralls.io/repos/github/udacity/logspout-logstash/badge.svg?branch=master)](https://coveralls.io/github/udacity/logspout-logstash?branch=master)
+
 A minimalistic adapter for github.com/gliderlabs/logspout to write to Logstash TCP.  Supports
 
 * multi-line log grouping
@@ -28,4 +31,23 @@ input {
     codec => json
   }
 }
+```
+
+## Developing
+
+```
+### See Makefile
+### All build artifacts have make-style dependencies defined
+
+# install build dependencies
+make deps
+
+# test
+make test
+
+# view coverage report in your browser
+make view-coverage
+
+# submit a coveralls report
+make coveralls
 ```
