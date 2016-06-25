@@ -19,6 +19,8 @@ test:
   override:
     - make test
   post:
+    - mkdir -p $CIRCLE_TEST_REPORTS/junit/
+    - cp report.xml $CIRCLE_TEST_REPORTS/junit/
     - make coveralls
 
 #deployment:
