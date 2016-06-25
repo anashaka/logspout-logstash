@@ -3,6 +3,11 @@ machine:
     IMPORT_PATH: ".go_workspace/src/github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
 
 dependencies:
+  # This is an ugly hack to work around golang's rigid project structure,
+  # made even more ugly by CircleCI's goofy support for ~ and relative paths.
+  # Instead, we inject ~ and absolute paths at every point.
+  # Change at your own risk. You've been warned.
+  # What this gives us is a clean test: block that works in Circle and on dev workstations
   pre:
     - mkdir -p ~/$IMPORT_PATH
     - rsync -avzC --delete ~/$CIRCLE_PROJECT_REPONAME/ ~/$IMPORT_PATH/
