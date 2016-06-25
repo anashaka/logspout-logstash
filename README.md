@@ -48,6 +48,7 @@ make test
 # view coverage report in your browser
 make view-coverage
 
-# submit a coveralls report (should only be run from CircleCI)
+# submit a coveralls report
+# must configure COVERALLS_TOKEN env var, should be run from CI only
 make coveralls
 ```
