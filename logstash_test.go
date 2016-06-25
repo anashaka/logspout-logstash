@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func mkMockWriter() (writer, *[]string) {
+func makeMockWriter() (writer, *[]string) {
 	var tmp []string
 	results := &tmp
 	return func(b []byte) (int, error) {
@@ -19,72 +19,50 @@ func mkMockWriter() (writer, *[]string) {
 	}, results
 }
 
-func TestStreamNotJson(t *testing.T) {
+func TestStreamMultiline(t *testing.T) {
 	assert := assert.New(t)
 
-	mockWriter, results := mkMockWriter()
+	mockWriter, results := makeMockWriter()
 	adapter := newLogstashAdapter(new(router.Route), mockWriter)
 
 	assert.NotNil(adapter)
 
 	logstream := make(chan *router.Message)
-	container := makeDummyContainer()
+	container := makeDummyContainer("anid")
 	lines := []string{
 		"Line1",
 		"   Line1.1",
 	}
 
-	go func() {
-		var messages []router.Message
-		for _, line := range lines {
-			messages = append(messages, makeDummyMessage(&container, line))
-		}
-
-		for _, msg := range messages {
-			msg := msg // $%!^& golang
-			logstream <- &msg
-		}
-		close(logstream)
-	}()
+	go pump(logstream, &container, [][]string{lines})
 
 	adapter.Stream(logstream)
-
-	var data map[string]interface{}
-	err := json.Unmarshal([]byte((*results)[0]), &data)
-	assert.Nil(err)
+	data := parseResult(assert, (*results)[0])
 
 	assert.Equal(strings.Join(lines, "\n"), data["message"])
-
-	var dockerInfo map[string]interface{}
-	dockerInfo = data["docker"].(map[string]interface{})
-	assert.Equal("name", dockerInfo["name"])
-	assert.Equal("ID", dockerInfo["id"])
-	assert.Equal("image", dockerInfo["image"])
-	assert.Equal("hostname", dockerInfo["hostname"])
+	assertDockerInfo(assert, &container, data["docker"])
 }
 
 func TestStreamJson(t *testing.T) {
 	assert := assert.New(t)
-	mockWriter, results := mkMockWriter()
+	mockWriter, results := makeMockWriter()
 	adapter := newLogstashAdapter(new(router.Route), mockWriter)
 	assert.NotNil(adapter)
 	logstream := make(chan *router.Message)
-	container := makeDummyContainer()
+	container := makeDummyContainer("anid")
 
-	str := `{ "remote_user": "-", "body_bytes_sent": "25", "request_time": "0.821", "status": "200", "request_method": "POST", "http_referrer": "-", "http_user_agent": "-" }`
+	rawLine := `{ "remote_user": "-",
+                "body_bytes_sent": "25",
+                "request_time": "0.821",
+                "status": "200",
+                "request_method": "POST",
+                "http_referrer": "-",
+                "http_user_agent": "-" }`
 
-	message := makeDummyMessage(&container, str)
-
-	go func() {
-		logstream <- &message
-		close(logstream)
-	}()
+	go pump(logstream, &container, [][]string{[]string{rawLine}})
 
 	adapter.Stream(logstream)
-
-	var data map[string]interface{}
-	err := json.Unmarshal([]byte((*results)[0]), &data)
-	assert.Nil(err)
+	data := parseResult(assert, (*results)[0])
 
 	assert.Equal("-", data["remote_user"])
 	assert.Equal("25", data["body_bytes_sent"])
@@ -94,25 +72,30 @@ func TestStreamJson(t *testing.T) {
 	assert.Equal("-", data["http_referrer"])
 	assert.Equal("-", data["http_user_agent"])
 
-	var dockerInfo map[string]interface{}
-	dockerInfo = data["docker"].(map[string]interface{})
-	assert.Equal("name", dockerInfo["name"])
-	assert.Equal("ID", dockerInfo["id"])
-	assert.Equal("image", dockerInfo["image"])
-	assert.Equal("hostname", dockerInfo["hostname"])
+	assertDockerInfo(assert, &container, data["docker"])
 }
 
-func makeDummyContainer() docker.Container {
+func makeDummyContainer(id string) docker.Container {
 	containerConfig := docker.Config{}
 	containerConfig.Image = "image"
 	containerConfig.Hostname = "hostname"
 
 	container := docker.Container{}
 	container.Name = "name"
-	container.ID = "ID"
+	container.ID = id
 	container.Config = &containerConfig
 
 	return container
+}
+
+func pump(logstream chan *router.Message, container *docker.Container, structureLines [][]string) {
+	for _, singleMessage := range structureLines {
+		for _, line := range singleMessage {
+			msg := makeDummyMessage(container, line)
+			logstream <- &msg
+		}
+	}
+	close(logstream)
 }
 
 func makeDummyMessage(container *docker.Container, data string) router.Message {
@@ -122,4 +105,20 @@ func makeDummyMessage(container *docker.Container, data string) router.Message {
 		Data:      data,
 		Time:      time.Now(),
 	}
+}
+
+func parseResult(assert *assert.Assertions, serialized string) map[string]interface{} {
+	var data map[string]interface{}
+	err := json.Unmarshal([]byte(serialized), &data)
+	assert.Nil(err)
+	return data
+}
+
+func assertDockerInfo(assert *assert.Assertions, expected *docker.Container, actual interface{}) {
+	var dockerInfo map[string]interface{}
+	dockerInfo = actual.(map[string]interface{})
+	assert.Equal(expected.Name, dockerInfo["name"])
+	assert.Equal(expected.ID, dockerInfo["id"])
+	assert.Equal(expected.Config.Image, dockerInfo["image"])
+	assert.Equal(expected.Config.Hostname, dockerInfo["hostname"])
 }
