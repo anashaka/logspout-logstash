@@ -1,6 +1,6 @@
 SOURCEDIR       := .
 SOURCES         := $(shell find $(SOURCEDIR) -name '*.go')
-COVER_PROFILES  := $(shell go list -f '{{if gt (len .TestGoFiles) 0}}{{.Name}}.coverprofile{{end}}' ./...)
+REPORTS         := $(shell go list -f '{{if gt (len .TestGoFiles) 0}}{{.Name}}.coverprofile{{end}}' ./...) report.xml coverage.out
 COVERALLS_TOKEN := $(shell echo $$COVERALLS_TOKEN)
 
 .PHONY: deps clean test coveralls view-coverage
@@ -11,16 +11,13 @@ deps:
 	go get -u github.com/jstemmer/go-junit-report
 	go get -t -d -v ./...
 
-$(COVER_PROFILES): $(SOURCES)
-	go list -f '{{if gt (len .TestGoFiles) 0}}"go test -v -covermode count -coverprofile {{.Name}}.coverprofile {{.ImportPath}}"{{end}}' ./... | xargs -I {} bash -c {}
-
-coverage.out: $(COVER_PROFILES)
+$(REPORTS): $(SOURCES)
+	go list -f '{{if gt (len .TestGoFiles) 0}}"go test -v -covermode count -coverprofile {{.Name}}.coverprofile {{.ImportPath}}"{{end}} | tee -a tmpreport.out' ./... | xargs -I {} bash -c {}
+	cat tmpreport.out | go-junit-report > report.xml
 	gocovmerge `ls *.coverprofile` > coverage.out
+	rm tmpreport.out
 
-report.xml: $(SOURCES)
-	go test -v ./... | tee /dev/stderr | go-junit-report > report.xml
-
-test: report.xml
+test: $(REPORTS)
 
 coveralls: coverage.out
 	goveralls -coverprofile=coverage.out -service=circle-ci -repotoken $(COVERALLS_TOKEN)
@@ -29,4 +26,4 @@ view-coverage: coverage.out
 	go tool cover -html=coverage.out
 
 clean:
-	rm -f $(COVER_PROFILES) coverage.out report.xml
+	rm -f $(REPORTS)
