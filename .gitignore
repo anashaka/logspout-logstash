@@ -26,3 +26,7 @@ _testmain.go
 *.exe
 *.test
 *.prof
+
+coverage.out
+report.xml
+*.coverprofile
