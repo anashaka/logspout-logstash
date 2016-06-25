@@ -9,10 +9,7 @@ dependencies:
   # Change at your own risk. You've been warned.
   # What this gives us is a clean test: block that works in Circle and on dev workstations
   pre:
-    - mkdir -p ~/$IMPORT_PATH
-    - rsync -avzC --delete ~/$CIRCLE_PROJECT_REPONAME/ ~/$IMPORT_PATH/
-    - rm -rf ~/$CIRCLE_PROJECT_REPONAME
-    - ln -s ~/$IMPORT_PATH ~/$CIRCLE_PROJECT_REPONAME 
+    - rm -rf ~/$IMPORT_PATH; mv ~/$CIRCLE_PROJECT_REPONAME ~/$IMPORT_PATH; ln -s ~/$IMPORT_PATH ~/$CIRCLE_PROJECT_REPONAME
     - make deps
 
 test:
