@@ -18,6 +18,7 @@ $(REPORTS): $(SOURCES)
 	rm tmpreport.out
 
 test: $(REPORTS)
+	@if `grep -q failures=\"[^0]\" report.xml` ; then echo "Failed"; false; fi
 
 coveralls: coverage.out
 	goveralls -coverprofile=coverage.out -service=circle-ci -repotoken $(COVERALLS_TOKEN)
