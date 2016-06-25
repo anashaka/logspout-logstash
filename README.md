@@ -1,6 +1,6 @@
 # logspout-logstash
-[![CircleCI](https://circleci.com/gh/udacity/logspout-logstash.svg?style=svg)](https://circleci.com/gh/udacity/logspout-logstash)
-[![Coverage Status](https://coveralls.io/repos/github/udacity/logspout-logstash/badge.svg?branch=master)](https://coveralls.io/github/udacity/logspout-logstash?branch=master)
+[![CircleCI](https://circleci.com/gh/udacity/logspout-logstash.svg?style=svg&ts=0)](https://circleci.com/gh/udacity/logspout-logstash)
+[![Coverage Status](https://coveralls.io/repos/github/udacity/logspout-logstash/badge.svg?branch=master&ts=0)](https://coveralls.io/github/udacity/logspout-logstash?branch=master)
 
 A minimalistic adapter for github.com/gliderlabs/logspout to write to Logstash TCP.  Supports
 
