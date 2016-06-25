@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/logspout/router"
+	_ "github.com/gliderlabs/logspout/transports/tcp"
+	_ "github.com/gliderlabs/logspout/transports/udp"
 	"github.com/stretchr/testify/assert"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +134,28 @@ func TestCacheExpiration(t *testing.T) {
 	assert.Equal("test", data["message"])
 
 	close(logstream)
+}
+
+func TestTCPInit(t *testing.T) {
+	assert := assert.New(t)
+	l, err := net.Listen("tcp", "localhost:0")
+	assert.Nil(err)
+	defer l.Close()
+
+	var r router.Route
+	r.Options = make(map[string]string)
+	r.Options["transport"] = "tcp"
+	r.Address = l.Addr().String()
+	_, err = NewLogstashAdapter(&r)
+	assert.Nil(err)
+}
+
+func TestUDPInit(t *testing.T) {
+	assert := assert.New(t)
+	var r router.Route
+	r.Address = "localhost:0"
+	_, err := NewLogstashAdapter(&r)
+	assert.Nil(err)
 }
 
 func makeDummyContainer(id string) docker.Container {
