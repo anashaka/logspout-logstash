@@ -75,6 +75,64 @@ func TestStreamJson(t *testing.T) {
 	assertDockerInfo(assert, &container, data["docker"])
 }
 
+func TestStreamMultipleMixedMessages(t *testing.T) {
+	assert := assert.New(t)
+
+	mockWriter, results := makeMockWriter()
+	adapter := newLogstashAdapter(new(router.Route), mockWriter)
+
+	logstream := make(chan *router.Message)
+	container := makeDummyContainer("anid")
+	expected := [][]string{
+		[]string{
+			"Line1",
+			"   Line1.1",
+		},
+		[]string{
+			`{"message":"I am json"}`,
+		},
+	}
+
+	go pump(logstream, &container, expected)
+
+	adapter.Stream(logstream)
+
+	// first message
+	data := parseResult(assert, (*results)[0])
+	assert.Equal(strings.Join(expected[0], "\n"), data["message"])
+
+	// second message
+	data = parseResult(assert, (*results)[1])
+	assert.Equal("I am json", data["message"])
+}
+
+func TestCacheExpiration(t *testing.T) {
+	assert := assert.New(t)
+
+	mockWriter, results := makeMockWriter()
+	var r router.Route
+	r.Options = make(map[string]string)
+	r.Options["cache_ttl"] = "5ms"
+	adapter := newLogstashAdapter(&r, mockWriter)
+	logstream := make(chan *router.Message)
+	container := makeDummyContainer("anid")
+
+	go func() {
+		msg := makeDummyMessage(&container, "test")
+		logstream <- &msg
+	}()
+
+	go adapter.Stream(logstream)
+
+	time.Sleep(15 * time.Millisecond)
+
+	assert.Equal(1, len(*results), "cache timer must fire to force message flush")
+	data := parseResult(assert, (*results)[0])
+	assert.Equal("test", data["message"])
+
+	close(logstream)
+}
+
 func makeDummyContainer(id string) docker.Container {
 	containerConfig := docker.Config{}
 	containerConfig.Image = "image"
