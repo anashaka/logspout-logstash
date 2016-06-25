@@ -5,6 +5,7 @@ import (
 	"github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/logspout/router"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,13 +26,17 @@ func TestStreamNotJson(t *testing.T) {
 
 	logstream := make(chan *router.Message)
 	container := makeDummyContainer()
-
-	messages := []router.Message{
-		makeDummyMessage(&container, "Line1"),
-		makeDummyMessage(&container, "   Line1.1"),
+	lines := []string{
+		"Line1",
+		"   Line1.1",
 	}
 
 	go func() {
+		var messages []router.Message
+		for _, line := range lines {
+			messages = append(messages, makeDummyMessage(&container, line))
+		}
+
 		for _, msg := range messages {
 			msg := msg // $%!^& golang
 			logstream <- &msg
@@ -45,7 +50,7 @@ func TestStreamNotJson(t *testing.T) {
 	err := json.Unmarshal([]byte(res), &data)
 	assert.Nil(err)
 
-	assert.Equal("Line1\n   Line1.1", data["message"])
+	assert.Equal(strings.Join(lines, "\n"), data["message"])
 
 	var dockerInfo map[string]interface{}
 	dockerInfo = data["docker"].(map[string]interface{})

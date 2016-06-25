@@ -48,6 +48,6 @@ make test
 # view coverage report in your browser
 make view-coverage
 
-# submit a coveralls report
+# submit a coveralls report (should only be run from CircleCI)
 make coveralls
 ```
