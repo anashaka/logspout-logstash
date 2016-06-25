@@ -22,7 +22,7 @@ func TestStreamNotJson(t *testing.T) {
 
 	adapter := newLogstashAdapter(new(router.Route), mockWriter)
 
-	assert.NotNil(adapter)
+	assert.Nil(adapter)
 
 	logstream := make(chan *router.Message)
 	container := makeDummyContainer()
