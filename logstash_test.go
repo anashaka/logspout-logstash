@@ -10,16 +10,19 @@ import (
 	"time"
 )
 
-var res string
-
-func mockWriter(b []byte) (int, error) {
-	res = string(b)
-	return 0, nil
+func mkMockWriter() (writer, *[]string) {
+	var tmp []string
+	results := &tmp
+	return func(b []byte) (int, error) {
+		*results = append(*results, string(b))
+		return 0, nil
+	}, results
 }
 
 func TestStreamNotJson(t *testing.T) {
 	assert := assert.New(t)
 
+	mockWriter, results := mkMockWriter()
 	adapter := newLogstashAdapter(new(router.Route), mockWriter)
 
 	assert.NotNil(adapter)
@@ -47,7 +50,7 @@ func TestStreamNotJson(t *testing.T) {
 	adapter.Stream(logstream)
 
 	var data map[string]interface{}
-	err := json.Unmarshal([]byte(res), &data)
+	err := json.Unmarshal([]byte((*results)[0]), &data)
 	assert.Nil(err)
 
 	assert.Equal(strings.Join(lines, "\n"), data["message"])
@@ -62,6 +65,7 @@ func TestStreamNotJson(t *testing.T) {
 
 func TestStreamJson(t *testing.T) {
 	assert := assert.New(t)
+	mockWriter, results := mkMockWriter()
 	adapter := newLogstashAdapter(new(router.Route), mockWriter)
 	assert.NotNil(adapter)
 	logstream := make(chan *router.Message)
@@ -79,7 +83,7 @@ func TestStreamJson(t *testing.T) {
 	adapter.Stream(logstream)
 
 	var data map[string]interface{}
-	err := json.Unmarshal([]byte(res), &data)
+	err := json.Unmarshal([]byte((*results)[0]), &data)
 	assert.Nil(err)
 
 	assert.Equal("-", data["remote_user"])
