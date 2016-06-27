@@ -3,6 +3,7 @@ package logstash
 import (
 	"encoding/json"
 	"errors"
+	_ "expvar"
 	"log"
 	"net"
 	"regexp"
