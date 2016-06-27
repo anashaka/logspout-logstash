@@ -126,7 +126,8 @@ func NewLogstashAdapter(route *router.Route) (router.LogAdapter, error) {
 	return newLogstashAdapter(route, write), nil
 }
 
-func (a *LogstashAdapter) lookupBuffer(key string) *multiline.MultiLine {
+func (a *LogstashAdapter) lookupBuffer(msg *router.Message) *multiline.MultiLine {
+	key := msg.Container.ID + msg.Source
 	if a.cache[key] == nil {
 		ml, _ := a.mkBuffer()
 		a.cache[key] = &ml
@@ -167,7 +168,7 @@ func (a *LogstashAdapter) readMessages(
 }
 
 func (a *LogstashAdapter) bufferMessage(msg *router.Message) []*router.Message {
-	msgOrNil := a.lookupBuffer(msg.Container.ID).Buffer(msg)
+	msgOrNil := a.lookupBuffer(msg).Buffer(msg)
 
 	if msgOrNil == nil {
 		return []*router.Message{}
