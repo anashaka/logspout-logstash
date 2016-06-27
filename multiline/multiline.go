@@ -95,14 +95,14 @@ func (ml *MultiLine) Buffer(next *router.Message) *router.Message {
 }
 
 func (ml *MultiLine) isContinuationMessage(msg *router.Message) bool {
-	return len(ml.pending) == 0 ||
+	return ml.PendingSize() == 0 ||
 		ml.isMultiline(ml.getLastPendingData(), msg.Data)
 }
 
 func (ml *MultiLine) addPending(next *router.Message) *router.Message {
-	if len(ml.pending) < ml.maxLines {
+	if ml.PendingSize() < ml.maxLines {
 		ml.pending = append(ml.pending, next)
-	} else if len(ml.pending) == ml.maxLines {
+	} else if ml.PendingSize() == ml.maxLines {
 		truncMessage := *next
 		truncMessage.Data = "[Truncated]"
 		ml.pending = append(ml.pending, &truncMessage)
@@ -126,13 +126,17 @@ func (ml *MultiLine) Flush() *router.Message {
 		buffer = append(buffer, message.Data)
 	}
 
-	if len(ml.pending) > 0 {
+	if ml.PendingSize() > 0 {
 		msg = new(router.Message)
 		*msg = *ml.pending[0]
 		msg.Data = strings.Join(buffer, ml.separator)
 	}
 
 	return msg
+}
+
+func (ml *MultiLine) PendingSize() int {
+	return len(ml.pending)
 }
 
 func (ml *MultiLine) Expire(t time.Time, ttl time.Duration) *router.Message {
@@ -148,7 +152,7 @@ func isExpired(t time.Time, lastTouched time.Time, ttl time.Duration) bool {
 }
 
 func (ml *MultiLine) getLastPendingData() string {
-	return ml.pending[len(ml.pending)-1].Data
+	return ml.pending[ml.PendingSize()-1].Data
 }
 
 // matchers

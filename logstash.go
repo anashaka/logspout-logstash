@@ -11,22 +11,31 @@ import (
 	"time"
 
 	"github.com/gliderlabs/logspout/router"
+	"github.com/rcrowley/go-metrics"
+	"github.com/rcrowley/go-metrics/exp"
 	"github.com/udacity/logspout-logstash/multiline"
+)
+
+var (
+	logMeter = metrics.NewMeter()
 )
 
 func init() {
 	router.AdapterFactories.Register(NewLogstashAdapter, "logstash")
+	exp.Exp(metrics.DefaultRegistry)
+	metrics.Register("logstash_message_rate", logMeter)
 }
 
 type newMultilineBufferFn func() (multiline.MultiLine, error)
 
 // LogstashAdapter is an adapter that streams TCP JSON to Logstash.
 type LogstashAdapter struct {
-	write    writer
-	route    *router.Route
-	cache    map[string]*multiline.MultiLine
-	cacheTTL time.Duration
-	mkBuffer newMultilineBufferFn
+	write       writer
+	route       *router.Route
+	cache       map[string]*multiline.MultiLine
+	cacheTTL    time.Duration
+	cachedLines metrics.Gauge
+	mkBuffer    newMultilineBufferFn
 }
 
 type ControlCode int
@@ -68,11 +77,15 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 		cacheTTL = 10 * time.Second
 	}
 
+	cachedLines := metrics.NewGauge()
+	metrics.Register("cached_lines_"+route.ID, cachedLines)
+
 	return &LogstashAdapter{
-		route:    route,
-		write:    write,
-		cache:    make(map[string]*multiline.MultiLine),
-		cacheTTL: cacheTTL,
+		route:       route,
+		write:       write,
+		cache:       make(map[string]*multiline.MultiLine),
+		cacheTTL:    cacheTTL,
+		cachedLines: cachedLines,
 		mkBuffer: func() (multiline.MultiLine, error) {
 			return multiline.NewMultiLine(
 				&multiline.MultilineConfig{
@@ -165,14 +178,18 @@ func (a *LogstashAdapter) bufferMessage(msg *router.Message) []*router.Message {
 
 func (a *LogstashAdapter) expireCache(t time.Time) []*router.Message {
 	var messages []*router.Message
+	var linesCounter int64 = 0
 
 	for id, buf := range a.cache {
+		linesCounter += int64(buf.PendingSize())
 		msg := buf.Expire(t, a.cacheTTL)
 		if msg != nil {
 			messages = append(messages, msg)
 			delete(a.cache, id)
 		}
 	}
+
+	a.cachedLines.Update(linesCounter)
 
 	return messages
 }
@@ -196,6 +213,7 @@ func (a *LogstashAdapter) sendMessages(msgs []*router.Message) {
 			log.Fatal("logstash:", err)
 		}
 	}
+	logMeter.Mark(int64(len(msgs)))
 }
 
 func (a *LogstashAdapter) sendMessage(msg *router.Message) error {
