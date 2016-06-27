@@ -78,7 +78,7 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 	}
 
 	cachedLines := metrics.NewGauge()
-	metrics.Register("cached_lines_"+route.ID, cachedLines)
+	metrics.Register(route.ID+"_cached_lines", cachedLines)
 
 	return &LogstashAdapter{
 		route:       route,
