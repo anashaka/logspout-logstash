@@ -13,12 +13,47 @@ import (
 	"time"
 )
 
+type MockConn struct {
+}
+
+func (m MockConn) Close() error {
+	return nil
+}
+
+func (m MockConn) Read(b []byte) (n int, err error) {
+	return 0, nil
+}
+
+func (m MockConn) Write(b []byte) (n int, err error) {
+	return 0, nil
+}
+
+func (m MockConn) LocalAddr() net.Addr {
+	return nil
+}
+
+func (m MockConn) RemoteAddr() net.Addr {
+	return nil
+}
+
+func (m MockConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (m MockConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (m MockConn) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
 func makeMockWriter() (writer, *[]string) {
 	var tmp []string
 	results := &tmp
-	return func(b []byte) (int, error) {
+	return func(_ net.Conn, b []byte) (int, error) {
 		*results = append(*results, string(b))
-		return 0, nil
+		return len(b), nil
 	}, results
 }
 
@@ -26,7 +61,7 @@ func TestStreamMultiline(t *testing.T) {
 	assert := assert.New(t)
 
 	mockWriter, results := makeMockWriter()
-	adapter := newLogstashAdapter(new(router.Route), mockWriter)
+	adapter := newAdapter(new(router.Route), mockWriter)
 
 	assert.NotNil(adapter)
 
@@ -49,7 +84,7 @@ func TestStreamMultiline(t *testing.T) {
 func TestStreamJson(t *testing.T) {
 	assert := assert.New(t)
 	mockWriter, results := makeMockWriter()
-	adapter := newLogstashAdapter(new(router.Route), mockWriter)
+	adapter := newAdapter(new(router.Route), mockWriter)
 	assert.NotNil(adapter)
 	logstream := make(chan *router.Message)
 	container := makeDummyContainer("anid")
@@ -82,7 +117,7 @@ func TestStreamMultipleMixedMessages(t *testing.T) {
 	assert := assert.New(t)
 
 	mockWriter, results := makeMockWriter()
-	adapter := newLogstashAdapter(new(router.Route), mockWriter)
+	adapter := newAdapter(new(router.Route), mockWriter)
 
 	logstream := make(chan *router.Message)
 	container := makeDummyContainer("anid")
@@ -116,7 +151,7 @@ func TestCacheExpiration(t *testing.T) {
 	var r router.Route
 	r.Options = make(map[string]string)
 	r.Options["cache_ttl"] = "5ms"
-	adapter := newLogstashAdapter(&r, mockWriter)
+	adapter := newAdapter(&r, mockWriter)
 	logstream := make(chan *router.Message)
 	container := makeDummyContainer("anid")
 
@@ -204,4 +239,8 @@ func assertDockerInfo(assert *assert.Assertions, expected *docker.Container, act
 	assert.Equal(expected.ID, dockerInfo["id"])
 	assert.Equal(expected.Config.Image, dockerInfo["image"])
 	assert.Equal(expected.Config.Hostname, dockerInfo["hostname"])
+}
+
+func newAdapter(route *router.Route, write writer) *LogstashAdapter {
+	return newLogstashAdapter(route, write, MockConn{})
 }

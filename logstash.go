@@ -20,6 +20,10 @@ var (
 	logMeter = metrics.NewMeter()
 )
 
+const (
+	tcpWriteTimeout = 5 * time.Second
+)
+
 func init() {
 	router.AdapterFactories.Register(NewLogstashAdapter, "logstash")
 	exp.Exp(metrics.DefaultRegistry)
@@ -31,6 +35,7 @@ type newMultilineBufferFn func() (multiline.MultiLine, error)
 // LogstashAdapter is an adapter that streams TCP JSON to Logstash.
 type LogstashAdapter struct {
 	write       writer
+	conn        net.Conn
 	route       *router.Route
 	cache       map[string]*multiline.MultiLine
 	cacheTTL    time.Duration
@@ -45,7 +50,7 @@ const (
 	Quit
 )
 
-func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
+func newLogstashAdapter(route *router.Route, write writer, conn net.Conn) *LogstashAdapter {
 	patternString, ok := route.Options["pattern"]
 	if !ok {
 		patternString = `(^\s)|(^Caused by:)`
@@ -74,7 +79,7 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 
 	cacheTTL, err := time.ParseDuration(route.Options["cache_ttl"])
 	if err != nil {
-		cacheTTL = 10 * time.Second
+		cacheTTL = 5 * time.Second
 	}
 
 	cachedLines := metrics.NewGauge()
@@ -83,6 +88,7 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 	return &LogstashAdapter{
 		route:       route,
 		write:       write,
+		conn:        conn,
 		cache:       make(map[string]*multiline.MultiLine),
 		cacheTTL:    cacheTTL,
 		cachedLines: cachedLines,
@@ -118,12 +124,12 @@ func NewLogstashAdapter(route *router.Route) (router.LogAdapter, error) {
 
 	var write writer
 	if transportId == "tcp" {
-		write = tcpWriter(conn)
+		write = tcpWriter
 	} else {
-		write = defaultWriter(conn)
+		write = defaultWriter
 	}
 
-	return newLogstashAdapter(route, write), nil
+	return newLogstashAdapter(route, write, conn), nil
 }
 
 func (a *LogstashAdapter) lookupBuffer(msg *router.Message) *multiline.MultiLine {
@@ -223,12 +229,21 @@ func (a *LogstashAdapter) sendMessage(msg *router.Message) error {
 	if err != nil {
 		return err
 	}
-	_, err = a.write(buff)
+	err = a.updateWriteDeadline()
+	if err != nil {
+		return err
+	}
+	_, err = a.write(a.conn, buff)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (a *LogstashAdapter) updateWriteDeadline() error {
+	deadline := time.Now().Add(tcpWriteTimeout)
+	return a.conn.SetWriteDeadline(deadline)
 }
 
 func serialize(msg *router.Message) ([]byte, error) {
@@ -297,17 +312,13 @@ type LogstashMessage struct {
 }
 
 // writers
-type writer func(b []byte) (int, error)
+type writer func(conn net.Conn, b []byte) (int, error)
 
-func defaultWriter(conn net.Conn) writer {
-	return func(b []byte) (int, error) {
-		return conn.Write(b)
-	}
+func defaultWriter(conn net.Conn, b []byte) (int, error) {
+	return conn.Write(b)
 }
 
-func tcpWriter(conn net.Conn) writer {
-	return func(b []byte) (int, error) {
-		// append a newline
-		return conn.Write([]byte(string(b) + "\n"))
-	}
+func tcpWriter(conn net.Conn, b []byte) (int, error) {
+	// append a newline
+	return conn.Write([]byte(string(b) + "\n"))
 }
