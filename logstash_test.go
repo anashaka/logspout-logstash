@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"fmt"
 )
 
 func makeMockWriter() (writer, *[]string) {
@@ -45,6 +46,39 @@ func TestStreamMultiline(t *testing.T) {
 	assert.Equal(strings.Join(lines, "\n"), data["message"])
 	assertDockerInfo(assert, &container, data["docker"])
 }
+
+func TestStreamMultilineStacktrace(t *testing.T) {
+	assert := assert.New(t)
+
+	mockWriter, results := makeMockWriter()
+	adapter := newLogstashAdapter(new(router.Route), mockWriter)
+
+	assert.NotNil(adapter)
+
+	logstream := make(chan *router.Message)
+	container := makeDummyContainer("anid")
+	lines := []string{
+		"12:55:46.650[WARN ][6d3b36a5-63b5-4262-9274-0183bed44960][qtp1162918744-18]o.e.j.s.ServletHandler                   :  org.springframework.web.util.NestedServletException: Request processing failed; nested exception is java.lang.IllegalArgumentException: Message test",
+		"	at org.eclipse.jetty.util.thread.QueuedThreadPool$3.run(QueuedThreadPool.java:572) [jetty-util-9.3.0.v20150612.jar:9.3.0.v20150612]",
+		"	at java.lang.Thread.run(Thread.java:745) [?:1.8.0_25]",
+		"	at com.mm.first.ge.controller.BlackListController.blackListSync(BlackListController.java:26) ~[main/:?]",
+		"Caused by: java.lang.IllegalArgumentException: Message test",
+		"	at com.mm.blacklist.ge.controller.BlackListController.blackListSync(BlackListController.java:26) ~[main/:?]",
+		"	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method) ~[?:1.8.0_25]",
+
+
+	}
+
+	go pump(logstream, &container, [][]string{lines})
+
+	adapter.Stream(logstream)
+	data := parseResult(assert, (*results)[0])
+
+	fmt.Println(data)
+	assert.Equal(strings.Join(lines, "\n"), data["message"])
+	assertDockerInfo(assert, &container, data["docker"])
+}
+
 
 func TestStreamJson(t *testing.T) {
 	assert := assert.New(t)

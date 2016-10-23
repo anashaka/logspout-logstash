@@ -14,6 +14,8 @@ import (
 	"github.com/rcrowley/go-metrics"
 	"github.com/rcrowley/go-metrics/exp"
 	"github.com/udacity/logspout-logstash/multiline"
+	"strings"
+	"fmt"
 )
 
 var (
@@ -30,12 +32,15 @@ type newMultilineBufferFn func() (multiline.MultiLine, error)
 
 // LogstashAdapter is an adapter that streams TCP JSON to Logstash.
 type LogstashAdapter struct {
-	write       writer
-	route       *router.Route
-	cache       map[string]*multiline.MultiLine
-	cacheTTL    time.Duration
-	cachedLines metrics.Gauge
-	mkBuffer    newMultilineBufferFn
+	write            writer
+	route            *router.Route
+	cache            map[string]*multiline.MultiLine
+	cacheTTL         time.Duration
+	cachedLines      metrics.Gauge
+	mkBuffer         newMultilineBufferFn
+	cleanupRegExp    *regexp.Regexp
+	javaLogRegExp    *regexp.Regexp
+	staskTraceRegExp *regexp.Regexp
 }
 
 type ControlCode int
@@ -77,8 +82,27 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 		cacheTTL = 10 * time.Second
 	}
 
+	cleanupPattern, ok := route.Options["cleanup_pattern"]
+	if !ok {
+		cleanupPattern = `\033\[[0-9;]*?m`
+	}
+
+	javaLogPattern, ok := route.Options["java_pattern"]
+	if !ok {
+		javaLogPattern = `([\d:.]+?)\[(\w+?)\s*?\]\[(.*?)\]\[(.*?)\](.*?)\s*?:([\S\w\W]*?)$`
+	}
+
+	stacktracePattern, ok := route.Options["stacktrace_pattern"]
+	if !ok {
+		stacktracePattern = `at (?P<fullclass>com\.mm.*)\.(?P<method>[\w]+)\((?P<classLine>[\w\.]+:[\d]+)\)\s\~?\[(?P<file>.*)\]`
+	}
+
+	cleanupRegExp := regexp.MustCompile(cleanupPattern)
+	javaLogRegExp := regexp.MustCompile(javaLogPattern)
+	staskTraceRegExp := regexp.MustCompile(stacktracePattern)
+
 	cachedLines := metrics.NewGauge()
-	metrics.Register(route.ID+"_cached_lines", cachedLines)
+	metrics.Register(route.ID + "_cached_lines", cachedLines)
 
 	return &LogstashAdapter{
 		route:       route,
@@ -96,6 +120,9 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 					MaxLines:  maxLines,
 				})
 		},
+		cleanupRegExp : cleanupRegExp,
+		javaLogRegExp : javaLogRegExp,
+		staskTraceRegExp : staskTraceRegExp,
 	}
 }
 
@@ -153,8 +180,8 @@ func (a *LogstashAdapter) Stream(logstream chan *router.Message) {
 }
 
 func (a *LogstashAdapter) readMessages(
-	logstream chan *router.Message,
-	cacheTicker <-chan time.Time) ([]*router.Message, ControlCode) {
+logstream chan *router.Message,
+cacheTicker <-chan time.Time) ([]*router.Message, ControlCode) {
 	select {
 	case t := <-cacheTicker:
 		return a.expireCache(t), Continue
@@ -218,7 +245,7 @@ func (a *LogstashAdapter) sendMessages(msgs []*router.Message) {
 }
 
 func (a *LogstashAdapter) sendMessage(msg *router.Message) error {
-	buff, err := serialize(msg)
+	buff, err := a.serialize(msg)
 
 	if err != nil {
 		return err
@@ -231,7 +258,7 @@ func (a *LogstashAdapter) sendMessage(msg *router.Message) error {
 	return nil
 }
 
-func serialize(msg *router.Message) ([]byte, error) {
+func (a *LogstashAdapter) serialize(msg *router.Message) ([]byte, error) {
 	var js []byte
 	var jsonMsg map[string]interface{}
 
@@ -241,31 +268,49 @@ func serialize(msg *router.Message) ([]byte, error) {
 		Image:    msg.Container.Config.Image,
 		Hostname: msg.Container.Config.Hostname,
 	}
-	udacityInfo := UdacityInfo{
-		Name:    msg.Container.Config.Labels["com.udacity.name"],
-		Version: msg.Container.Config.Labels["com.udacity.version"],
-		Env:     msg.Container.Config.Labels["com.udacity.env"],
+	componentInfo := ComponentInfo{
+		Name:    msg.Container.Config.Labels["com.mm.component"],
+		Version: msg.Container.Config.Labels["com.mm.version"],
+		Env:     msg.Container.Config.Labels["com.mm.env"],
 	}
 
 	err := json.Unmarshal([]byte(msg.Data), &jsonMsg)
-
+	javaLog := a.parseJavaMsg(&msg.Data)
 	if err != nil {
 		// the message is not in JSON make a new JSON message
-		msg := LogstashMessage{
-			Message: msg.Data,
-			Docker:  dockerInfo,
-			Udacity: udacityInfo,
-			Stream:  msg.Source,
+		var msgToSend LogstashMessage
+		if (javaLog != nil) {
+			msgToSend = LogstashMessage{
+				Message: msg.Data,
+				Docker:  dockerInfo,
+				Component: componentInfo,
+				Stream:  msg.Source,
+				JavaLog: *javaLog,
+			}
+			js, err = json.Marshal(msgToSend)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			msgToSend = LogstashMessage{
+				Message: msg.Data,
+				Docker:  dockerInfo,
+				Component: componentInfo,
+				Stream:  msg.Source,
+			}
 		}
-		js, err = json.Marshal(msg)
+		js, err = json.Marshal(msgToSend)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// the message is already in JSON just add the docker specific fields as a nested structure
 		jsonMsg["docker"] = dockerInfo
-		jsonMsg["udacity"] = udacityInfo
-
+		if (javaLog != nil) {
+			jsonMsg["javaLog"] = javaLog
+		}
+		jsonMsg["component"] = componentInfo
+		jsonMsg["message"] = msg.Data
 		js, err = json.Marshal(jsonMsg)
 		if err != nil {
 			return nil, err
@@ -275,6 +320,60 @@ func serialize(msg *router.Message) ([]byte, error) {
 	return js, nil
 }
 
+func (a *LogstashAdapter) parseJavaMsg(msg *string) *JavaLog {
+	var cleanMsg = a.cleanupRegExp.ReplaceAllLiteralString(*msg, "")
+	var javaLog JavaLog
+	match := a.javaLogRegExp.FindStringSubmatch(cleanMsg)
+	if (match == nil) {
+		return nil
+	}
+	exception := a.parseJavaException(&match[6])
+	if (exception == nil) {
+		javaLog = JavaLog{
+			Timestamp:  match[1],
+			Level: match[2],
+			Uuid: match[3],
+			Thread: match[4],
+			Logger: match[5],
+		}
+	} else {
+		javaLog = JavaLog{
+			Timestamp:  match[1],
+			Level: match[2],
+			Uuid: match[3],
+			Thread: match[4],
+			Logger: match[5],
+			Exception: *exception,
+		}
+
+	}
+
+	fmt.Println(javaLog)
+	return &javaLog
+}
+
+func (a *LogstashAdapter) parseJavaException(javaMsg *string) *JavaException {
+	if (strings.Contains(*javaMsg, "at ")) {
+		splitByCause := strings.Split(*javaMsg, "Caused by")
+		for i := len(splitByCause) - 1; i >= 0; i -= 1 {
+			cause := splitByCause[i]
+			stackMatch := a.staskTraceRegExp.FindStringSubmatch(cause)
+			if (stackMatch == nil) {
+				continue
+			}
+			javaException := JavaException{
+				FullClass : stackMatch[1],
+				Method : stackMatch[2],
+				ClassLine : stackMatch[3],
+				Jar : stackMatch[4],
+			}
+			fmt.Println(javaException)
+			return &javaException
+		}
+	}
+	return nil
+}
+
 type DockerInfo struct {
 	Name     string `json:"name"`
 	ID       string `json:"id"`
@@ -282,18 +381,35 @@ type DockerInfo struct {
 	Hostname string `json:"hostname"`
 }
 
-type UdacityInfo struct {
+type ComponentInfo struct {
 	Name    string `json:"name"`
 	Env     string `json:"env"`
 	Version string `json:"version"`
 }
 
+type JavaLog struct {
+	Timestamp string  `json:"timestamp"`
+	Level     string  `json:"level"`
+	Uuid      string  `json:"uuid"`
+	Thread    string `json:"thread"`
+	Logger    string `json:"logger"`
+	Exception JavaException `json:"exception,omitempty"`
+}
+
+type JavaException struct {
+	FullClass string `json:"fullclass"`
+	Method    string `json:"method"`
+	ClassLine string `json:"classline"`
+	Jar       string `json:"jar"`
+}
+
 // LogstashMessage is a simple JSON input to Logstash.
 type LogstashMessage struct {
-	Message string      `json:"message"`
-	Stream  string      `json:"stream"`
-	Docker  DockerInfo  `json:"docker"`
-	Udacity UdacityInfo `json:"udacity"`
+	Message   string      `json:"message"`
+	Stream    string      `json:"stream"`
+	Docker    DockerInfo  `json:"docker"`
+	Component ComponentInfo `json:"component"`
+	JavaLog   JavaLog `json:"javaLog,omitempty"`
 }
 
 // writers
@@ -311,3 +427,5 @@ func tcpWriter(conn net.Conn) writer {
 		return conn.Write([]byte(string(b) + "\n"))
 	}
 }
+
+
