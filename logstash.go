@@ -278,31 +278,18 @@ func (a *LogstashAdapter) serialize(msg *router.Message) ([]byte, error) {
 	javaLog := a.parseJavaMsg(&msg.Data)
 	if err != nil {
 		// the message is not in JSON make a new JSON message
-		var msgToSend LogstashMessage
-		if (javaLog != nil) {
-			msgToSend = LogstashMessage{
-				Message: msg.Data,
-				Docker:  dockerInfo,
-				Component: componentInfo,
-				Stream:  msg.Source,
-				JavaLog: *javaLog,
-			}
-			js, err = json.Marshal(msgToSend)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			msgToSend = LogstashMessage{
-				Message: msg.Data,
-				Docker:  dockerInfo,
-				Component: componentInfo,
-				Stream:  msg.Source,
-			}
+		msgToSend := LogstashMessage{
+			Message: msg.Data,
+			Docker:  dockerInfo,
+			Component: componentInfo,
+			Stream:  msg.Source,
+			JavaLog: javaLog,
 		}
 		js, err = json.Marshal(msgToSend)
 		if err != nil {
 			return nil, err
 		}
+
 	} else {
 		// the message is already in JSON just add the docker specific fields as a nested structure
 		jsonMsg["docker"] = dockerInfo
@@ -322,32 +309,20 @@ func (a *LogstashAdapter) serialize(msg *router.Message) ([]byte, error) {
 
 func (a *LogstashAdapter) parseJavaMsg(msg *string) *JavaLog {
 	var cleanMsg = a.cleanupRegExp.ReplaceAllLiteralString(*msg, "")
-	var javaLog JavaLog
 	match := a.javaLogRegExp.FindStringSubmatch(cleanMsg)
 	if (match == nil) {
 		return nil
 	}
 	exception := a.parseJavaException(&match[6])
-	if (exception == nil) {
-		javaLog = JavaLog{
-			Timestamp:  match[1],
-			Level: match[2],
-			Uuid: match[3],
-			Thread: match[4],
-			Logger: match[5],
-		}
-	} else {
-		javaLog = JavaLog{
-			Timestamp:  match[1],
-			Level: match[2],
-			Uuid: match[3],
-			Thread: match[4],
-			Logger: match[5],
-			Exception: *exception,
-		}
 
+	javaLog := JavaLog{
+		Timestamp:  match[1],
+		Level: match[2],
+		Uuid: match[3],
+		Thread: match[4],
+		Logger: match[5],
+		Exception: exception,
 	}
-
 	fmt.Println(javaLog)
 	return &javaLog
 }
@@ -393,7 +368,7 @@ type JavaLog struct {
 	Uuid      string  `json:"uuid"`
 	Thread    string `json:"thread"`
 	Logger    string `json:"logger"`
-	Exception JavaException `json:"exception,omitempty"`
+	Exception *JavaException `json:"exception,omitempty"`
 }
 
 type JavaException struct {
@@ -409,7 +384,7 @@ type LogstashMessage struct {
 	Stream    string      `json:"stream"`
 	Docker    DockerInfo  `json:"docker"`
 	Component ComponentInfo `json:"component"`
-	JavaLog   JavaLog `json:"javaLog,omitempty"`
+	JavaLog   *JavaLog `json:"javaLog,omitempty"`
 }
 
 // writers
