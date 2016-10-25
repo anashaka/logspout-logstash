@@ -41,6 +41,7 @@ type LogstashAdapter struct {
 	cleanupRegExp    *regexp.Regexp
 	javaLogRegExp    *regexp.Regexp
 	staskTraceRegExp *regexp.Regexp
+	causeRegExp      *regexp.Regexp
 }
 
 type ControlCode int
@@ -94,12 +95,18 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 
 	stacktracePattern, ok := route.Options["stacktrace_pattern"]
 	if !ok {
-		stacktracePattern = `at (?P<fullclass>com\.mm.*)\.(?P<method>[\w]+)\((?P<classLine>[\w\.]+:[\d]+)\)\s\~?\[(?P<file>.*)\]`
+		stacktracePattern = `at (?P<fullclass>com\.mm.+?)\.(?P<method>[\w]+)\((?P<classLine>[\w\.]+:[\d]+)\)\s\~?\[(?P<file>.*)\]`
+	}
+
+	causePattern, ok := route.Options["cause_pattern"]
+	if !ok {
+		causePattern = `^(.*?):\s(.*)`
 	}
 
 	cleanupRegExp := regexp.MustCompile(cleanupPattern)
 	javaLogRegExp := regexp.MustCompile(javaLogPattern)
 	staskTraceRegExp := regexp.MustCompile(stacktracePattern)
+	causeRegExp := regexp.MustCompile(causePattern)
 
 	cachedLines := metrics.NewGauge()
 	metrics.Register(route.ID + "_cached_lines", cachedLines)
@@ -123,6 +130,7 @@ func newLogstashAdapter(route *router.Route, write writer) *LogstashAdapter {
 		cleanupRegExp : cleanupRegExp,
 		javaLogRegExp : javaLogRegExp,
 		staskTraceRegExp : staskTraceRegExp,
+		causeRegExp : causeRegExp,
 	}
 }
 
@@ -274,12 +282,12 @@ func (a *LogstashAdapter) serialize(msg *router.Message) ([]byte, error) {
 		Env:     msg.Container.Config.Labels["com.mm.env"],
 	}
 
+	javaLog, parsedMsg := a.parseJavaMsg(&msg.Data)
 	err := json.Unmarshal([]byte(msg.Data), &jsonMsg)
-	javaLog := a.parseJavaMsg(&msg.Data)
 	if err != nil {
 		// the message is not in JSON make a new JSON message
 		msgToSend := LogstashMessage{
-			Message: msg.Data,
+			Message: *parsedMsg,
 			Docker:  dockerInfo,
 			Component: componentInfo,
 			Stream:  msg.Source,
@@ -297,7 +305,7 @@ func (a *LogstashAdapter) serialize(msg *router.Message) ([]byte, error) {
 			jsonMsg["javaLog"] = javaLog
 		}
 		jsonMsg["component"] = componentInfo
-		jsonMsg["message"] = msg.Data
+		jsonMsg["message"] = *parsedMsg
 		js, err = json.Marshal(jsonMsg)
 		if err != nil {
 			return nil, err
@@ -307,11 +315,11 @@ func (a *LogstashAdapter) serialize(msg *router.Message) ([]byte, error) {
 	return js, nil
 }
 
-func (a *LogstashAdapter) parseJavaMsg(msg *string) *JavaLog {
+func (a *LogstashAdapter) parseJavaMsg(msg *string) (*JavaLog, *string) {
 	var cleanMsg = a.cleanupRegExp.ReplaceAllLiteralString(*msg, "")
 	match := a.javaLogRegExp.FindStringSubmatch(cleanMsg)
 	if (match == nil) {
-		return nil
+		return nil, msg
 	}
 	exception := a.parseJavaException(&match[6])
 
@@ -324,26 +332,32 @@ func (a *LogstashAdapter) parseJavaMsg(msg *string) *JavaLog {
 		Exception: exception,
 	}
 	fmt.Println(javaLog)
-	return &javaLog
+	result := strings.Trim(match[6], " \t\n\r")
+	return &javaLog, &result
 }
 
 func (a *LogstashAdapter) parseJavaException(javaMsg *string) *JavaException {
 	if (strings.Contains(*javaMsg, "at ")) {
-		splitByCause := strings.Split(*javaMsg, "Caused by")
+		splitByCause := strings.Split(*javaMsg, "Caused by: ")
 		for i := len(splitByCause) - 1; i >= 0; i -= 1 {
 			cause := splitByCause[i]
 			stackMatch := a.staskTraceRegExp.FindStringSubmatch(cause)
 			if (stackMatch == nil) {
 				continue
 			}
-			javaException := JavaException{
-				FullClass : stackMatch[1],
-				Method : stackMatch[2],
-				ClassLine : stackMatch[3],
-				Jar : stackMatch[4],
+			causeMatch := a.causeRegExp.FindStringSubmatch(cause)
+			if (len(causeMatch) == 3 && len(stackMatch) == 5) {
+				javaException := JavaException{
+					CauseException : causeMatch[1],
+					CauseMessage: causeMatch[2],
+					FullClass : stackMatch[1],
+					Method : stackMatch[2],
+					ClassLine : stackMatch[3],
+					Jar : stackMatch[4],
+				}
+				fmt.Println(javaException)
+				return &javaException
 			}
-			fmt.Println(javaException)
-			return &javaException
 		}
 	}
 	return nil
@@ -372,10 +386,12 @@ type JavaLog struct {
 }
 
 type JavaException struct {
-	FullClass string `json:"fullclass"`
-	Method    string `json:"method"`
-	ClassLine string `json:"classline"`
-	Jar       string `json:"jar"`
+	CauseException string `json:"causeEx"`
+	CauseMessage   string `json:"causeMsg"`
+	FullClass      string `json:"fullclass"`
+	Method         string `json:"method"`
+	ClassLine      string `json:"classline"`
+	Jar            string `json:"jar"`
 }
 
 // LogstashMessage is a simple JSON input to Logstash.
