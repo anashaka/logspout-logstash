@@ -15,7 +15,6 @@ import (
 	"github.com/rcrowley/go-metrics/exp"
 	"github.com/udacity/logspout-logstash/multiline"
 	"strings"
-	"fmt"
 )
 
 var (
@@ -331,7 +330,6 @@ func (a *LogstashAdapter) parseJavaMsg(msg *string) (*JavaLog, *string) {
 		Logger: match[5],
 		Exception: exception,
 	}
-	fmt.Println(javaLog)
 	result := strings.Trim(match[6], " \t\n\r")
 	return &javaLog, &result
 }
@@ -355,7 +353,6 @@ func (a *LogstashAdapter) parseJavaException(javaMsg *string) *JavaException {
 					ClassLine : stackMatch[3],
 					Jar : stackMatch[4],
 				}
-				fmt.Println(javaException)
 				return &javaException
 			}
 		}
