@@ -277,7 +277,7 @@ func (a *LogstashAdapter) serialize(msg *router.Message) ([]byte, error) {
 		Hostname: msg.Container.Config.Hostname,
 	}
 	componentInfo := ComponentInfo{
-		Name:    msg.Container.Config.Labels["com.mm.component"],
+		Name:    msg.Container.Config.Labels["com.docker.compose.service"],
 		Version: msg.Container.Config.Labels["com.mm.version"],
 		Env:     msg.Container.Config.Labels["com.mm.env"],
 	}
